@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台设置 · X 运营台</title>
+  <style>
+    :root { color-scheme: light; --bg:#f5f7fa; --panel:#ffffff; --panel2:#f1f4f8; --line:#e3e8ef; --text:#0f1419; --muted:#5b6b7b; --accent:#1d9bf0; --accent2:#1a8cd8; --soft:#e8f5fe; --ok:#16a34a; --bad:#dc2626; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 Inter,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    button,input,textarea,select { font:inherit; color:inherit; }
+    button { border:0; border-radius:9px; padding:9px 14px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
+    button:hover { background:var(--accent2); } button:disabled { opacity:.55; cursor:wait; }
+    button.ghost { background:var(--panel); color:var(--text); border:1px solid var(--line); font-weight:500; } button.ghost:hover { background:var(--panel2); }
+    input,textarea,select { width:100%; border:1px solid var(--line); border-radius:9px; background:var(--panel); padding:10px 12px; }
+    input:focus,textarea:focus,select:focus { outline:3px solid #1d9bf033; border-color:var(--accent); }
+    header { display:flex; align-items:center; gap:16px; padding:14px 24px; border-bottom:1px solid var(--line); background:var(--panel); }
+    header h1 { font-size:17px; margin:0; } header a { color:var(--muted); text-decoration:none; }
+    main { max-width:760px; margin:24px auto; padding:0 20px; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; margin-bottom:18px; box-shadow:0 1px 2px #0f14190a; }
+    h2 { font-size:16px; margin:0 0 4px; } .muted { color:var(--muted); font-size:13px; }
+    label { display:block; margin:14px 0 6px; font-weight:500; } .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+    .row { display:flex; gap:10px; align-items:center; } .result { font-size:13px; margin-left:4px; }
+    .ok { color:var(--ok); } .bad { color:var(--bad); }
+    .tip { background:var(--soft); border-radius:10px; padding:10px 12px; font-size:13px; color:#0b5d93; margin-top:12px; }
+    .bar { position:sticky; bottom:0; background:#ffffffee; backdrop-filter:blur(8px); border-top:1px solid var(--line); padding:12px 20px; display:flex; justify-content:flex-end; gap:10px; align-items:center; }
+    @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<header><a href="/">← 返回运营台</a><h1>后台设置</h1></header>
+<main>
+  <section class="panel">
+    <h2>AI 模型</h2>
+    <p class="muted">任何兼容 OpenAI 接口（/chat/completions）的服务都能用。下拉只是帮你快速填写，地址和模型名都可以自己改成任意值。密钥只保存在本机。</p>
+    <label for="preset">快速填写</label>
+    <select id="preset">
+      <option value="">自定义：自己填写接口地址和模型名</option>
+      <option value="https://api.moonshot.cn/v1|kimi-k3">Kimi（推荐写手）</option>
+      <option value="https://api.deepseek.com/v1|deepseek-chat">DeepSeek（便宜，适合当编辑）</option>
+      <option value="https://open.bigmodel.cn/api/paas/v4|glm-5.3">智谱 GLM</option>
+      <option value="https://dashscope.aliyuncs.com/compatible-mode/v1|qwen-max">通义千问</option>
+      <option value="https://openrouter.ai/api/v1|anthropic/claude-opus-5">OpenRouter · Claude</option>
+      <option value="https://api.openai.com/v1|gpt-5.5">OpenAI</option>
+      <option value="http://127.0.0.1:11434/v1|qwen3:14b">本地 Ollama</option>
+    </select>
+    <label for="ai_base_url">接口地址（Base URL）</label>
+    <input id="ai_base_url" placeholder="https://api.moonshot.cn/v1">
+    <div class="grid">
+      <div><label for="ai_model">写手模型</label><input id="ai_model" placeholder="任意模型名，如 kimi-k3"></div>
+      <div><label for="ai_api_key">API Key</label><input id="ai_api_key" type="password" autocomplete="off" placeholder="留空表示不修改"></div>
+    </div>
+    <label for="ai_editor_model">编辑模型（选填）</label>
+    <input id="ai_editor_model" placeholder="留空则和写手用同一个；需与上面是同一个服务商">
+    <p class="muted" id="keyState"></p>
+    <div class="row" style="margin-top:12px"><button class="ghost" id="testBtn" onclick="testModel()">保存并测试连接</button><span id="testResult" class="result"></span></div>
+    <div class="tip">建议：写手用中文文笔好的模型（Kimi、GLM、Claude），编辑用便宜、推理稳的模型（如 DeepSeek，需同一服务商时可留空）。模型名以服务商控制台为准，填错时「测试连接」会提示。一键生成每次调用 3 次模型，AI 修改每次 1 次。</div>
+  </section>
+
+  <section class="panel">
+    <h2>发布节奏</h2>
+    <p class="muted">只在 09:00–23:00 发布，每次额外加 15–40 分钟随机延迟。新号或久未活跃的号建议每天 1 条起步。</p>
+    <div class="grid">
+      <div><label for="daily_limit">每天最多发布</label><select id="daily_limit"></select></div>
+      <div><label for="min_gap_hours">两条之间至少间隔</label><select id="min_gap_hours"></select></div>
+    </div>
+    <p class="muted">「立即发送」不受排期限制，但仍受每日上限约束，并且距离上一条至少 60 分钟。</p>
+  </section>
+
+  <section class="panel">
+    <h2>写作风格</h2>
+    <p class="muted">这是让 AI 写得「像你」的关键。不填也能用，但会更像通用营销号。一键生成也会按这里挑选和你相关的热点。</p>
+    <label for="persona">你是谁、写给谁看</label>
+    <textarea id="persona" rows="3" placeholder="例如：独立开发者，做过两款出海 SaaS，日常用 Claude Code 写代码。读者是国内想做 AI 产品的程序员。说话直接，不吹不黑，偶尔自嘲。"></textarea>
+    <label for="samples">你以前反响好的帖子（3–5 条，每条之间空一行）</label>
+    <textarea id="samples" rows="8" placeholder="把你自己点赞/转发最多的几条原文粘过来。AI 会模仿语气、用词和长度，不会照抄内容。"></textarea>
+  </section>
+</main>
+<div class="bar"><span id="saveResult" class="result"></span><a href="/" class="muted" style="text-decoration:none">返回</a><button id="saveBtn" onclick="save()">保存设置</button></div>
+<script>
+const $ = id => document.getElementById(id);
+const FIELDS = ['ai_base_url', 'ai_model', 'ai_editor_model', 'ai_api_key', 'daily_limit', 'min_gap_hours', 'persona', 'samples'];
+async function api(url, options = {}) {
+  const res = await fetch(url, {headers:{'Content-Type':'application/json'}, ...options});
+  const body = await res.json().catch(() => ({ok:false, error:'服务没有响应'}));
+  if (!res.ok || body.ok === false) throw new Error(body.error || '操作失败');
+  return body;
+}
+function range(id, [low, high], unit) { $(id).innerHTML = Array.from({length:high - low + 1}, (_, i) => low + i).map(n => `<option value="${n}">${n} ${unit}</option>`).join(''); }
+function matchPreset() { const v = `${$('ai_base_url').value}|${$('ai_model').value}`; $('preset').value = [...$('preset').options].some(o => o.value === v) ? v : ''; }
+async function load() {
+  const {settings, limits} = await api('/api/settings');
+  range('daily_limit', limits.daily_limit, '条'); range('min_gap_hours', limits.min_gap_hours, '小时');
+  for (const key of FIELDS) if (key !== 'ai_api_key') $(key).value = settings[key] ?? '';
+  $('keyState').textContent = settings.ai_api_key ? `当前密钥：${settings.ai_api_key}` : '尚未设置密钥';
+  matchPreset();
+}
+$('preset').onchange = e => { if (!e.target.value) { $('ai_model').focus(); return; } const [url, model] = e.target.value.split('|'); $('ai_base_url').value = url; $('ai_model').value = model; };
+$('ai_base_url').oninput = $('ai_model').oninput = matchPreset;
+function show(el, ok, text) { el.className = `result ${ok ? 'ok' : 'bad'}`; el.textContent = text; }
+async function persist() { const body = Object.fromEntries(FIELDS.map(k => [k, $(k).value])); await api('/api/settings', {method:'POST', body:JSON.stringify(body)}); $('ai_api_key').value = ''; await load(); }
+async function save() {
+  $('saveBtn').disabled = true;
+  try { await persist(); show($('saveResult'), true, '已保存'); } catch (e) { show($('saveResult'), false, e.message); }
+  $('saveBtn').disabled = false;
+}
+async function testModel() {
+  $('testBtn').disabled = true; show($('testResult'), true, '测试中…');
+  try { await persist(); const b = await api('/api/settings/test', {method:'POST'}); show($('testResult'), true, `连接成功：${b.reply}`); }
+  catch (e) { show($('testResult'), false, e.message); }
+  $('testBtn').disabled = false;
+}
+load();
+</script>
+</body>
+</html>

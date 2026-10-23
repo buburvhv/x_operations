@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>X 运营台</title>
+  <style>
+    :root { color-scheme: light; --bg:#f5f7fa; --panel:#ffffff; --panel2:#f1f4f8; --line:#e3e8ef; --text:#0f1419; --muted:#5b6b7b; --accent:#1d9bf0; --accent2:#1a8cd8; --soft:#e8f5fe; --ok:#16a34a; --warn:#d97706; --bad:#dc2626; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:14px/1.6 Inter,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    button,input,textarea,select { font:inherit; color:inherit; }
+    button { border:0; border-radius:9px; padding:9px 14px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
+    button:hover { background:var(--accent2); } button:disabled { opacity:.55; cursor:wait; }
+    button.ghost { background:var(--panel); color:var(--text); border:1px solid var(--line); font-weight:500; } button.ghost:hover { background:var(--panel2); }
+    button.link { background:none; padding:0; color:var(--accent); font-weight:500; } button.link:hover { text-decoration:underline; }
+    input,textarea,select { width:100%; border:1px solid var(--line); border-radius:9px; background:var(--panel); padding:10px 12px; }
+    input:focus,textarea:focus,select:focus { outline:3px solid #1d9bf033; border-color:var(--accent); }
+    textarea { resize:vertical; } .muted { color:var(--muted); font-size:13px; } .hidden { display:none !important; }
+    a { color:var(--accent); }
+    header { display:flex; align-items:center; gap:16px; padding:12px 24px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#ffffffee; backdrop-filter:blur(8px); z-index:5; }
+    header h1 { font-size:17px; margin:0; } .spacer { flex:1; }
+    .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:99px; padding:4px 11px; font-size:13px; background:var(--panel); }
+    .dot { width:8px; height:8px; border-radius:50%; background:#c0c8d2; } .dot.on { background:var(--ok); }
+    .modes { display:flex; gap:4px; background:var(--panel2); border-radius:11px; padding:4px; }
+    .modes button { background:none; color:var(--muted); padding:6px 16px; font-weight:600; }
+    .modes button.active { background:var(--panel); color:var(--text); box-shadow:0 1px 3px #0f14191f; }
+    .shell { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr) 340px; gap:18px; padding:18px 24px; max-width:1500px; margin:auto; }
+    .quick { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:18px; padding:18px 24px; max-width:1200px; margin:auto; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; min-width:0; box-shadow:0 1px 2px #0f14190a; }
+    .step { display:flex; align-items:center; gap:10px; margin:0 0 12px; font-size:16px; } .step b { display:grid; place-items:center; width:24px; height:24px; border-radius:50%; background:var(--accent); color:#fff; font-size:13px; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .trend { display:flex; gap:10px; align-items:center; width:100%; text-align:left; background:none; border:1px solid transparent; border-radius:10px; padding:8px 10px; font-weight:500; color:var(--text); }
+    .trend:hover { background:var(--panel2); } .trend.active { border-color:var(--accent); background:var(--soft); }
+    .rank { width:22px; color:var(--muted); font-variant-numeric:tabular-nums; } .trend .vol { margin-left:auto; color:var(--muted); font-size:12px; }
+    .card { border:1px solid var(--line); background:var(--panel); border-radius:11px; padding:12px; margin-top:10px; overflow-wrap:anywhere; }
+    .variant,.post { cursor:pointer; } .variant:hover,.post:hover { border-color:var(--accent); }
+    .variant.active,.post.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); background:var(--soft); }
+    .tag { font-size:12px; color:var(--accent); font-weight:600; }
+    .empty { padding:28px 10px; text-align:center; color:var(--muted); }
+    .badge { font-size:12px; border-radius:6px; padding:1px 8px; font-weight:600; }
+    .badge.queued { color:#b45309; background:#fef3c7; } .badge.posted { color:#15803d; background:#dcfce7; } .badge.failed,.badge.expired { color:#b91c1c; background:#fee2e2; }
+    .notice { border:1px solid #fcd34d; background:#fffbeb; color:#92400e; border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:12px; }
+    .error { color:var(--bad); font-size:13px; margin-top:8px; }
+    .modal { position:fixed; inset:0; background:#0f141966; display:grid; place-items:center; z-index:20; }
+    .modal .panel { width:min(440px,92vw); box-shadow:0 20px 50px #0f141933; } .tabs { display:flex; gap:6px; margin-bottom:14px; }
+    .tabs button { flex:1; } .stack > * + * { margin-top:10px; }
+    #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--text); color:#fff; padding:10px 16px; border-radius:10px; z-index:30; box-shadow:0 8px 24px #0f141933; }
+    ol.guide { padding-left:18px; margin:0; color:var(--muted); font-size:13px; }
+    .boards { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+    .boards button { padding:5px 12px; border-radius:99px; font-weight:500; background:var(--panel); border:1px solid var(--line); color:var(--text); }
+    .boards button:hover { background:var(--panel2); } .boards button.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .hero { text-align:center; padding:26px 10px 10px; } .hero button { padding:12px 34px; font-size:16px; border-radius:99px; }
+    .event { background:var(--panel2); border-radius:11px; padding:12px 14px; margin-top:14px; }
+    .pill { display:inline-block; font-size:12px; border-radius:99px; padding:1px 9px; background:var(--soft); color:#0b5d93; font-weight:600; margin-right:6px; }
+    .facts { margin:8px 0 0; padding-left:18px; font-size:13px; } .facts li + li { margin-top:4px; } .facts .src { color:var(--muted); }
+    .revise { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; } .revise button { padding:5px 11px; font-weight:500; }
+    @media (max-width:1200px) { .shell,.quick { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>X 运营台</h1>
+  <div class="modes"><button id="modeQuick" onclick="setMode('quick')">一键发帖</button><button id="modeCraft" onclick="setMode('craft')">选题精写</button></div>
+  <span class="chip" id="quota">今日 0/3</span>
+  <span class="muted" id="nextSlot"></span>
+  <div class="spacer"></div>
+  <span class="chip"><span class="dot" id="dot"></span><span id="accountText">检查登录…</span></span>
+  <button class="ghost" id="accountBtn" onclick="openLogin()">登录 X</button>
+  <a class="chip" href="/settings" style="color:var(--text);text-decoration:none">⚙ 后台设置</a>
+</header>
+
+<div class="shell hidden" id="craftView">
+  <section class="panel">
+    <div class="row"><h2 class="step"><b>1</b>选一个热点</h2><button class="ghost" onclick="loadTrends()">刷新</button></div>
+    <div class="boards" id="boards"></div>
+    <div id="customBox" class="row hidden" style="margin-bottom:8px"><input id="keywords" placeholder="空格分隔，例如：Cursor 编程 Vibe" onkeydown="if(event.key==='Enter')loadTrends()"><button onclick="loadTrends()">找</button></div>
+    <div id="regionBox" class="row hidden" style="margin-bottom:8px"><select id="region" onchange="loadTrends()"></select></div>
+    <p class="muted" id="boardHint"></p>
+    <div id="trends"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section class="panel">
+    <h2 class="step"><b>2</b>生成文案</h2>
+    <div id="topicEmpty" class="empty">← 先在左侧点一个热点</div>
+    <div id="topicBox" class="hidden">
+      <div class="row"><strong id="topicName" style="font-size:18px"></strong><a id="topicLink" class="muted" target="_blank" rel="noopener">在 X 上看 ↗</a></div>
+      <div id="context"></div>
+      <label class="muted" for="angle" style="display:block;margin-top:14px">你的看法（选填，一句话即可，让文案更像你说的）</label>
+      <input id="angle" placeholder="例如：我觉得这事被高估了">
+      <div class="row" style="margin-top:10px"><span class="muted" id="aiHint"></span><button id="genBtn" onclick="generate()">AI 写 3 条</button></div>
+      <div id="variants"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 class="step"><b>3</b>确认并排队</h2>
+    <div id="loginNotice" class="notice hidden">还没登录 X：可以先写好排进队列，登录后到点自动发出。<button class="link" onclick="openLogin()">去登录</button></div>
+    <textarea id="text" rows="7" placeholder="点选中间的一种写法，或直接在这里写。这就是最终要发出的那一条推文。"></textarea>
+    <div class="row"><span id="count" class="muted">0/280</span><span class="muted" id="whenHint"></span></div>
+    <div id="manualTime" class="hidden" style="margin-top:8px">
+      <label class="muted" for="when">指定最早发布时间（系统仍会遵守每天 ≤3 条、间隔 ≥4 小时）</label>
+      <input id="when" type="datetime-local">
+    </div>
+    <div class="row" style="margin-top:12px"><button class="link" id="timeToggle" onclick="toggleTime()">自己指定时间</button><button id="queueBtn" onclick="createDraft()">加入发布队列</button></div>
+    <div id="craftQueue"></div>
+  </section>
+</div>
+
+<div class="quick" id="quickView">
+  <section class="panel">
+    <h2 class="step">一键发帖 <span class="muted" style="font-weight:400">AI 自己挑热点、查事实、选情绪，只给你一条</span></h2>
+    <div class="muted">热点来源</div>
+    <div class="boards" id="quickSources" style="margin-top:6px"></div>
+    <div id="quickNotice" class="notice hidden"></div>
+    <div class="hero" id="quickHero">
+      <button id="quickBtn" onclick="quickGenerate()">✨ 生成一条</button>
+      <p class="muted" id="quickHint">约 30–60 秒：选热点 → 提炼事实 → 写 3 条 → 编辑留 1 条</p>
+    </div>
+    <div id="quickResult" class="hidden">
+      <div class="event" id="quickEvent"></div>
+      <label class="muted" for="quickText" style="display:block;margin-top:14px">帖子（可以直接改）</label>
+      <textarea id="quickText" rows="6"></textarea>
+      <div class="row"><span id="quickCount" class="muted"></span><span class="muted" id="quickWhy"></span></div>
+      <div class="muted" style="margin-top:12px">让 AI 改：</div>
+      <div class="revise" id="revisePresets">
+        <button class="ghost" data-p="shorter">更短</button><button class="ghost" data-p="sharper">更犀利</button><button class="ghost" data-p="casual">更口语</button>
+        <button class="ghost" data-p="human">去 AI 味</button><button class="ghost" data-p="emotion">换个情绪</button><button class="ghost" data-p="question">结尾换成具体提问</button>
+      </div>
+      <div class="row" style="margin-top:8px"><input id="reviseInput" placeholder="自己说要怎么改，例如：加上我用过 Cursor 的经历" onkeydown="if(event.key==='Enter')revise('')"><button class="ghost" id="reviseBtn" onclick="revise('')">改</button></div>
+      <div class="row" style="margin-top:14px">
+        <span><button class="link" id="undoBtn" onclick="undo()">↶ 撤销修改</button> · <button class="link" onclick="quickGenerate(true)">换个写法</button> · <button class="link" onclick="quickGenerate(false, true)">换个热点</button></span>
+        <span><button class="ghost" id="quickQueueBtn" onclick="quickQueue(false)">加入队列</button> <button id="quickNowBtn" onclick="quickQueue(true)">立即发送</button></span>
+      </div>
+    </div>
+  </section>
+  <section class="panel" id="quickQueue"></section>
+</div>
+
+<div id="queuePanel">
+    <h3 style="margin:22px 0 4px;font-size:15px">发布队列</h3>
+    <p class="muted" style="margin:0">到点自动发出，每条只尝试一次。保持本程序运行即可。</p>
+    <div id="list"></div>
+    <h3 style="margin:22px 0 4px;font-size:15px">灵感库</h3>
+    <p class="muted" style="margin:0">先把看到的好帖子存下来，有空再挑着写。</p>
+    <textarea id="saveText" rows="2" placeholder="粘贴一条你觉得好的帖子或一个选题" style="margin-top:8px"></textarea>
+    <div class="row" style="margin-top:8px"><input id="saveNote" placeholder="备注（选填）"><button class="ghost" onclick="saveInspiration()">收藏</button></div>
+    <div id="savedList"></div>
+</div>
+
+<div id="loginModal" class="modal hidden" onclick="if(event.target===this)closeLogin()">
+  <div class="panel">
+    <div class="row"><h2 style="margin:0;font-size:17px">登录 X 账号</h2><button class="link" onclick="closeLogin()">关闭</button></div>
+    <p class="muted">账号信息只保存在本机 data 目录，不会上传。密码不保存。</p>
+    <div class="tabs"><button id="tabPwd" onclick="tab('pwd')">账号密码</button><button id="tabCookie" class="ghost" onclick="tab('cookie')">浏览器导入</button></div>
+    <div id="pwdForm" class="stack">
+      <input id="username" placeholder="用户名（不带 @）或邮箱" autocomplete="username">
+      <input id="password" type="password" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+      <button id="loginBtn" onclick="login()" style="width:100%">登录</button>
+      <p class="muted">X 经常要求邮箱验证码或两步验证，这时密码登录会失败，请改用「浏览器导入」，一次即可。</p>
+    </div>
+    <div id="cookieForm" class="stack hidden">
+      <ol class="guide">
+        <li>用 Chrome/Edge 打开 x.com 并正常登录</li>
+        <li>按 F12 → 顶部「应用 / Application」→ 左侧 Cookie → https://x.com</li>
+        <li>找到 auth_token 和 ct0 两行，分别复制「值」粘贴到下面</li>
+      </ol>
+      <input id="token" placeholder="auth_token 的值">
+      <input id="ct0" placeholder="ct0 的值">
+      <button id="cookieBtn" onclick="importCookie()" style="width:100%">验证并保存</button>
+    </div>
+    <p id="loginError" class="error hidden" role="alert"></p>
+  </div>
+</div>
+<div id="toast" class="hidden" role="status"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const state = { connected:false, trends:[], topic:null, context:[], variants:[] };
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), 3500); }
+async function api(url, options = {}) {
+  const res = await fetch(url, {headers:{'Content-Type':'application/json'}, ...options});
+  let body = {}; try { body = await res.json(); } catch { body = {ok:false, error:'服务没有响应，请确认程序在运行'}; }
+  if (!res.ok || body.ok === false) throw new Error(typeof body.error === 'string' ? body.error : (body.error?.message || '操作失败'));
+  return body;
+}
+async function busy(btn, label, fn) { const old = btn.textContent; btn.disabled = true; btn.textContent = label; try { return await fn(); } finally { btn.disabled = false; btn.textContent = old; } }
+
+// ---- 登录 ----
+function openLogin() { if (state.connected) return logout(); $('loginError').classList.add('hidden'); $('loginModal').classList.remove('hidden'); $('username').focus(); }
+function closeLogin() { $('loginModal').classList.add('hidden'); }
+function tab(name) { $('pwdForm').classList.toggle('hidden', name !== 'pwd'); $('cookieForm').classList.toggle('hidden', name !== 'cookie'); $('tabPwd').className = name === 'pwd' ? '' : 'ghost'; $('tabCookie').className = name === 'cookie' ? '' : 'ghost'; $('loginError').classList.add('hidden'); }
+async function submitAccount(btn, payload, label) {
+  $('loginError').classList.add('hidden');
+  try {
+    const body = await busy(btn, label, () => api('/api/account', {method:'POST', body:JSON.stringify(payload)}));
+    $('password').value = ''; $('token').value = ''; $('ct0').value = '';
+    closeLogin(); toast(`登录成功：@${body.screenName || '已连接'}`); refresh();
+  } catch (e) {
+    $('loginError').textContent = e.message; $('loginError').classList.remove('hidden');
+    if (/浏览器导入/.test(e.message)) tab('cookie'), $('loginError').classList.remove('hidden');
+  }
+}
+function login() {
+  const username = $('username').value.trim(), password = $('password').value;
+  if (!username || !password) { $('loginError').textContent = '请填写用户名和密码'; $('loginError').classList.remove('hidden'); return; }
+  submitAccount($('loginBtn'), {username, password}, '正在登录 X，约 10–30 秒…');
+}
+function importCookie() {
+  const authToken = $('token').value.trim(), ct0 = $('ct0').value.trim();
+  if (!authToken || !ct0) { $('loginError').textContent = '两个值都要填'; $('loginError').classList.remove('hidden'); return; }
+  submitAccount($('cookieBtn'), {authToken, ct0}, '正在验证…');
+}
+async function logout() { if (!confirm('退出当前 X 账号？队列里的内容会保留，但不会再自动发出。')) return; await api('/api/logout', {method:'POST'}); toast('已退出'); refresh(); }
+
+// ---- 热点 ----
+state.board = localStorage.getItem('board') || '';
+function renderBoards(boards) {
+  const all = {...boards, custom:'自定义', global:'全球热搜'};
+  if (!state.board) state.board = state.connected ? Object.keys(boards)[0] : 'global';
+  $('boards').innerHTML = Object.entries(all).map(([k, v]) => `<button data-b="${esc(k)}" class="${k === state.board ? 'active' : ''}">${esc(v)}</button>`).join('');
+  $('customBox').classList.toggle('hidden', state.board !== 'custom');
+  $('regionBox').classList.toggle('hidden', state.board !== 'global');
+  $('keywords').value = localStorage.getItem('keywords') || $('keywords').value;
+}
+$('boards').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.board = b.dataset.b; localStorage.setItem('board', state.board); renderBoards(state.boards); loadTrends(); });
+const metric = x => `@${esc(x.author)} · ♥ ${x.likes} · 转 ${x.retweets} · 评 ${x.replies}`;
+async function loadTrends() {
+  if (!state.boards) return;
+  $('trends').innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    if (state.board === 'global') {
+      $('boardHint').textContent = 'X 各地实时热搜榜（多为外文），无需登录，每 10 分钟更新。';
+      const body = await api(`/api/trends?region=${encodeURIComponent($('region').value || '')}`);
+      if (!$('region').options.length) $('region').innerHTML = Object.entries(body.regions).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join('');
+      state.trends = body.items.map(t => ({...t, kind:'trend'}));
+      $('trends').innerHTML = state.trends.map((t, i) => `<button class="trend" data-i="${i}"><span class="rank">${i + 1}</span><span>${esc(t.name)}</span>${t.volume ? `<span class="vol">${(t.volume / 1000).toFixed(0)}K 帖</span>` : ''}</button>`).join('') || '<div class="empty">暂时没有热点</div>';
+      return;
+    }
+    let url = `/api/hot?board=${encodeURIComponent(state.board)}`;
+    if (state.board === 'custom') {
+      const kw = $('keywords').value.trim(); localStorage.setItem('keywords', kw);
+      if (!kw) { $('boardHint').textContent = ''; $('trends').innerHTML = '<div class="empty">输入你关心的关键词，按回车</div>'; return; }
+      url = `/api/hot?keywords=${encodeURIComponent(kw)}`;
+    }
+    $('boardHint').textContent = '近 24 小时中文区互动最高的帖子，按转发/评论加权排序，每 15 分钟更新。点一条就围绕它写。';
+    const body = await api(url);
+    state.trends = body.items.map(t => ({...t, kind:'post', name:t.text.split('\n')[0].slice(0, 40), query:t.text.slice(0, 60)}));
+    $('trends').innerHTML = state.trends.map((t, i) => `<div class="card post" data-i="${i}" tabindex="0"><div class="row"><span class="muted">${metric(t)}</span><a class="muted" href="${esc(t.url)}" target="_blank" rel="noopener">原帖 ↗</a></div>${esc(t.text.slice(0, 140))}${t.text.length > 140 ? '…' : ''}</div>`).join('') || '<div class="empty">这个板块最近 24 小时没有高互动帖，换个板块或关键词试试</div>';
+  } catch (e) {
+    const login = /请先登录/.test(e.message) ? '<button style="margin-top:10px" onclick="openLogin()">登录 X</button> ' : '';
+    $('trends').innerHTML = `<div class="empty">${esc(e.message)}<br>${login}<button class="ghost" style="margin-top:10px" onclick="loadTrends()">重试</button></div>`;
+  }
+}
+$('trends').addEventListener('click', e => { if (e.target.closest('a')) return; const b = e.target.closest('.trend, .post'); if (b) selectTopic(+b.dataset.i, b); });
+async function selectTopic(i, btn) {
+  document.querySelectorAll('.trend.active, .post.active').forEach(x => x.classList.remove('active')); btn.classList.add('active');
+  const t = state.trends[i]; state.topic = t; state.context = []; state.variants = [];
+  $('topicEmpty').classList.add('hidden'); $('topicBox').classList.remove('hidden');
+  $('variants').innerHTML = '';
+  if (t.kind === 'post') {
+    // 板块热帖：直接以这条帖子为素材，写自己的原创观点（不是转发、不是回复）
+    state.context = [t.text];
+    $('topicName').textContent = t.name; $('topicLink').href = t.url;
+    $('context').innerHTML = `<div class="card"><div class="muted">${metric(t)}</div>${esc(t.text)}</div>`;
+    return;
+  }
+  $('topicName').textContent = t.name; $('topicLink').href = `https://x.com/search?q=${encodeURIComponent(t.query)}`;
+  $('context').innerHTML = '<p class="muted">正在找这个话题下的热门帖子…</p>';
+  try {
+    const body = await api(`/api/topic?q=${encodeURIComponent(t.query)}`);
+    if (state.topic !== t) return;
+    state.context = body.items.map(x => x.text);
+    $('context').innerHTML = body.items.length
+      ? `<p class="muted" style="margin:10px 0 0">大家在聊（作为写作素材）：</p>` + body.items.slice(0, 3).map(x => `<div class="card"><div class="muted">${metric(x)}</div>${esc(x.text.slice(0, 160))}</div>`).join('')
+      : `<p class="muted">${esc(body.note || '没找到相关热帖，将只根据话题名生成。')}</p>`;
+  } catch (e) { $('context').innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+// ---- 文案 ----
+const xlen = t => [...t.replace(/https?:\/\/\S+/g, 'x'.repeat(23))].reduce((n, c) => { const k = c.codePointAt(0); return n + (k <= 4351 || (k >= 8192 && k <= 8205) || (k >= 8208 && k <= 8223) || (k >= 8242 && k <= 8247) ? 1 : 2); }, 0);
+async function generate() {
+  if (!state.topic) return;
+  const topic = state.topic;
+  try {
+    const body = await busy($('genBtn'), '写稿 + 编辑把关中，约 20–40 秒…', () => api('/api/copy', {method:'POST', body:JSON.stringify({topic:topic.name, context:state.context, angle:$('angle').value})}));
+    if (state.topic !== topic) return;
+    state.variants = body.variants;
+    $('variants').innerHTML = body.variants.map((v, i) => `<div class="card variant" data-i="${i}" tabindex="0"><div class="row"><span class="tag">${i === 0 && v.score ? '推荐 · ' : ''}${esc(v.type || '写法 ' + (i + 1))}${v.score ? ' · ' + esc(v.score) + ' 分' : ''}</span><span class="muted">${xlen(v.text)}/280 · 点击使用</span></div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.text)}</div>${v.why ? `<div class="muted" style="margin-top:6px">💡 ${esc(v.why)}</div>` : ''}</div>`).join('');
+  } catch (e) { toast(e.message); }
+}
+function useVariant(card) {
+  document.querySelectorAll('.variant.active').forEach(x => x.classList.remove('active')); card.classList.add('active');
+  $('text').value = state.variants[+card.dataset.i].text; updateCount(); $('text').focus();
+}
+$('variants').addEventListener('click', e => { const c = e.target.closest('.variant'); if (c) useVariant(c); });
+$('variants').addEventListener('keydown', e => { const c = e.target.closest('.variant'); if (c && e.key === 'Enter') useVariant(c); });
+
+// ---- 排队 ----
+function updateCount() { const n = xlen($('text').value); $('count').textContent = `${n}/280（中文算 2）`; $('count').style.color = n > 280 ? 'var(--bad)' : n > 250 ? 'var(--warn)' : ''; }
+$('text').addEventListener('input', updateCount);
+function toggleTime() { const box = $('manualTime'); box.classList.toggle('hidden'); $('timeToggle').textContent = box.classList.contains('hidden') ? '自己指定时间' : '改回自动安排'; if (box.classList.contains('hidden')) $('when').value = ''; }
+async function createDraft() {
+  const text = $('text').value.trim();
+  if (!text) { toast('先选一种写法或输入内容'); $('text').focus(); return; }
+  try {
+    const body = await busy($('queueBtn'), '加入中…', () => api('/api/drafts', {method:'POST', body:JSON.stringify({text, scheduledAt:$('when').value})}));
+    $('text').value = ''; updateCount(); if (!$('manualTime').classList.contains('hidden')) toggleTime();
+    toast(`已加入队列，将于 ${body.whenText} 自动发布`); refresh();
+  } catch (e) { toast(e.message); }
+}
+async function retry(id) { try { const b = await api(`/api/drafts/${id}/retry`, {method:'POST'}); toast(`已重新安排到 ${b.whenText}`); refresh(); } catch (e) { toast(e.message); } }
+async function postNow(id, btn) {
+  if (!confirm('现在就发出这条？发出后无法在这里撤回。')) return;
+  try { const b = await busy(btn, '发送中…', () => api(`/api/drafts/${id}/now`, {method:'POST'})); toast('已发布'); if (b.url) window.open(b.url, '_blank', 'noopener'); } catch (e) { toast(e.message); }
+  refresh();
+}
+async function removeDraft(id) { if (!confirm('从队列删除这条？')) return; await api(`/api/drafts/${id}`, {method:'DELETE'}); refresh(); }
+async function remixDraft(id, btn) {
+  const item = state.drafts.find(d => d.id === id); if (!item) return;
+  try {
+    const r = await busy(btn, '改写中…', () => api('/api/remix', {method:'POST', body:JSON.stringify({text:item.text})}));
+    const b = await api('/api/drafts', {method:'POST', body:JSON.stringify({text:r.text})});
+    toast(`已换个说法重新排队，${b.whenText} 发布`); refresh();
+  } catch (e) { toast(e.message); }
+}
+async function makeCard(id, btn) { try { await busy(btn, '生成配图…', () => api(`/api/drafts/${id}/card`, {method:'POST'})); toast('已生成配图，发布时会一并带上'); refresh(); } catch (e) { toast(e.message); } }
+
+// ---- 灵感库 ----
+async function loadSaved() {
+  try { const b = await api('/api/saved'); renderSaved(b.items); } catch { /* 面板还没展开时忽略 */ }
+}
+function renderSaved(items) {
+  $('savedList').innerHTML = items.map(s => `<div class="card"><div style="white-space:pre-wrap">${esc(s.text.slice(0, 200))}</div><div class="muted" style="margin-top:6px">${s.note ? esc(s.note) + ' · ' : ''}<button class="link" onclick="useSaved(${s.id})">拿去写</button> · <button class="link" onclick="deleteSaved(${s.id})">删除</button></div></div>`).join('') || '<div class="empty">还没有收藏</div>';
+  state.saved = items;
+}
+async function saveInspiration() {
+  const text = $('saveText').value.trim(); if (!text) return;
+  try { await api('/api/saved', {method:'POST', body:JSON.stringify({text, note:$('saveNote').value.trim()})}); $('saveText').value = ''; $('saveNote').value = ''; loadSaved(); }
+  catch (e) { toast(e.message); }
+}
+function useSaved(id) {
+  const item = (state.saved || []).find(s => s.id === id); if (!item) return;
+  setMode('craft');
+  state.topic = {name:item.text.slice(0, 40), query:item.text.slice(0, 60), kind:'saved'}; state.context = [item.text]; state.variants = [];
+  $('topicEmpty').classList.add('hidden'); $('topicBox').classList.remove('hidden');
+  $('topicName').textContent = '来自灵感库'; $('topicLink').removeAttribute('href');
+  $('context').innerHTML = `<div class="card">${esc(item.text)}</div>`;
+  $('angle').value = item.note || '';
+}
+async function deleteSaved(id) { await api(`/api/saved/${id}`, {method:'DELETE'}); loadSaved(); }
+function draftCard(d) {
+  const label = d.status === 'posted' ? `发布于 ${d.whenText}` : d.status === 'queued' ? `计划 ${d.whenText}` : d.whenText;
+  let actions = '';
+  if (d.status === 'posted') actions = d.tweet_url ? `<a href="${esc(d.tweet_url)}" target="_blank" rel="noopener">查看推文 ↗</a>` : '';
+  else if (d.status === 'queued') actions = `<button class="link" onclick="postNow(${d.id}, this)">立即发送</button> · <button class="link" onclick="removeDraft(${d.id})">取消</button>`;
+  else actions = `<button class="link" onclick="postNow(${d.id}, this)">立即发送</button> · <button class="link" onclick="retry(${d.id})">重新安排</button> · <button class="link" onclick="removeDraft(${d.id})">删除</button>`;
+  const metrics = d.metrics ? `<div class="muted">浏览 ${d.metrics.views ?? '–'} · ♥ ${d.metrics.likes ?? 0} · 转 ${d.metrics.retweets ?? 0} · 评 ${d.metrics.replies ?? 0}</div>` : '';
+  const extra = `<button class="link" onclick="remixDraft(${d.id}, this)">换个说法再发</button>` + (d.status !== 'posted' ? ` · <button class="link" onclick="makeCard(${d.id}, this)">${d.hasImage ? '重新生成配图' : '生成配图'}</button>` : '');
+  return `<div class="card"><div class="row"><span class="badge ${esc(d.status)}">${esc(d.statusText)}</span><span class="muted">${esc(label)}</span></div><div style="margin:6px 0;white-space:pre-wrap">${esc(d.text)}</div>${d.hasImage ? '<div class="muted">🖼 已配图</div>' : ''}${metrics}${d.error ? `<div class="error">${esc(d.error)}</div>` : ''}<div class="muted">${actions}${actions ? ' · ' : ''}${extra}</div></div>`;
+}
+
+// ---- 模式切换：两种模式共用一个发布队列 ----
+function setMode(mode) {
+  localStorage.setItem('mode', mode);
+  $('quickView').classList.toggle('hidden', mode !== 'quick'); $('craftView').classList.toggle('hidden', mode !== 'craft');
+  $('modeQuick').className = mode === 'quick' ? 'active' : ''; $('modeCraft').className = mode === 'craft' ? 'active' : '';
+  $(mode === 'quick' ? 'quickQueue' : 'craftQueue').appendChild($('queuePanel'));
+  $('queuePanel').firstElementChild.style.marginTop = mode === 'quick' ? '0' : '22px';
+}
+
+// ---- 一键发帖 ----
+const quick = { source: localStorage.getItem('quickSource') || 'weibo', result: null, history: [], skip: [] };
+function renderQuickSources() {
+  const all = {...state.cnSources, trends:'X 全球热搜', ...Object.fromEntries(Object.entries(state.boards).map(([k, v]) => [`board:${k}`, `X · ${v}`]))};
+  if (!(quick.source in all)) quick.source = 'weibo';
+  $('quickSources').innerHTML = Object.entries(all).map(([k, v]) => `<button data-s="${esc(k)}" class="${k === quick.source ? 'active' : ''}">${esc(v)}</button>`).join('');
+  const needLogin = quick.source.startsWith('board:') && !state.connected;
+  $('quickNotice').textContent = needLogin ? 'X 板块热点要用你的 X 账号搜索，请先登录。微博、抖音、知乎热榜不需要登录。' : '';
+  $('quickNotice').classList.toggle('hidden', !needLogin);
+}
+$('quickSources').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; quick.source = b.dataset.s; quick.skip = []; localStorage.setItem('quickSource', quick.source); renderQuickSources(); });
+function setQuickText(text) { $('quickText').value = text; updateQuickCount(); }
+function updateQuickCount() { const n = xlen($('quickText').value); $('quickCount').textContent = `${n}/280（中文算 2）`; $('quickCount').style.color = n > 280 ? 'var(--bad)' : n > 250 ? 'var(--warn)' : ''; $('undoBtn').disabled = !quick.history.length; }
+$('quickText').addEventListener('input', updateQuickCount);
+function renderEvent(r) {
+  const ev = r.event, facts = r.facts || [];
+  $('quickEvent').innerHTML = `<div class="row"><span><span class="pill">${esc(ev.source)}</span>${ev.emotion ? `<span class="pill">情绪：${esc(ev.emotion)}</span>` : ''}</span>${ev.url ? `<a href="${esc(ev.url)}" target="_blank" rel="noopener" class="muted">看原始热点 ↗</a>` : ''}</div>
+    <div style="font-weight:600;margin-top:6px">${esc(ev.name)}</div>
+    ${ev.why ? `<div class="muted">为什么选它：${esc(ev.why)}</div>` : ''}
+    ${facts.length ? `<div class="muted" style="margin-top:8px">帖子只用了这些事实（发之前扫一眼）：</div><ul class="facts">${facts.map(f => `<li>${esc(f.fact)}${f.source ? ` <span class="src">— ${esc(f.source.slice(0, 50))}</span>` : ''}</li>`).join('')}</ul>` : '<div class="muted" style="margin-top:8px">⚠ 素材里只有标题，没有可核实的细节，发之前请自己确认。</div>'}`;
+  $('quickWhy').textContent = r.post.why ? `💡 ${r.post.why}` : '';
+}
+async function quickGenerate(sameEvent = false, nextEvent = false) {
+  if (nextEvent && quick.result) quick.skip.push(quick.result.event.name);
+  const [source, board] = quick.source.startsWith('board:') ? ['board', quick.source.slice(6)] : [quick.source, ''];
+  const payload = {source, board, skip: quick.skip};
+  if (sameEvent && quick.result) payload.event = quick.result.event;
+  const label = sameEvent ? '重写中，约 20–40 秒…' : '挑热点、查事实、写稿中，约 30–60 秒…';
+  try {
+    const r = await busy($('quickBtn'), label, () => api('/api/quick', {method:'POST', body:JSON.stringify(payload)}));
+    quick.result = r; quick.history = [];
+    renderEvent(r); setQuickText(r.post.text);
+    $('quickResult').classList.remove('hidden'); $('quickBtn').textContent = '✨ 再来一条';
+    $('quickHint').textContent = '不满意可以让 AI 改，或换个写法 / 换个热点';
+  } catch (e) { if (/登录/.test(e.message)) openLogin(); toast(e.message); }
+}
+async function revise(preset) {
+  const text = $('quickText').value.trim(), instruction = $('reviseInput').value.trim();
+  if (!text) return toast('先生成一条');
+  if (!preset && !instruction) { $('reviseInput').focus(); return toast('写一句你想怎么改'); }
+  const btns = [...document.querySelectorAll('#revisePresets button'), $('reviseBtn')]; btns.forEach(b => b.disabled = true);
+  const btn = preset ? document.querySelector(`#revisePresets [data-p="${preset}"]`) : $('reviseBtn');
+  try {
+    const facts = (quick.result?.facts || []).map(f => f.fact);
+    const r = await busy(btn, '改写中…', () => api('/api/revise', {method:'POST', body:JSON.stringify({text, preset, instruction, facts})}));
+    quick.history.push(text); setQuickText(r.text); if (!preset) $('reviseInput').value = '';
+  } catch (e) { toast(e.message); }
+  finally { btns.forEach(b => b.disabled = false); updateQuickCount(); }
+}
+$('revisePresets').addEventListener('click', e => { const b = e.target.closest('button'); if (b) revise(b.dataset.p); });
+function undo() { if (quick.history.length) setQuickText(quick.history.pop()); }
+async function quickQueue(sendNow) {
+  const text = $('quickText').value.trim();
+  if (!text) return;
+  if (sendNow && !confirm('现在就发出这条？发出后无法在这里撤回。')) return;
+  const btn = $(sendNow ? 'quickNowBtn' : 'quickQueueBtn');
+  try {
+    const body = await busy(btn, sendNow ? '发送中…' : '加入中…', () => api('/api/drafts', {method:'POST', body:JSON.stringify({text})}));
+    if (sendNow) {
+      try { const b = await api(`/api/drafts/${body.id}/now`, {method:'POST'}); toast('已发布'); if (b.url) window.open(b.url, '_blank', 'noopener'); }
+      catch (e) { toast(`${e.message}（已保留在队列，${body.whenText} 自动发）`); }
+    } else toast(`已加入队列，将于 ${body.whenText} 自动发布`);
+    $('quickResult').classList.add('hidden'); quick.result = null; quick.history = []; $('quickBtn').textContent = '✨ 生成一条';
+  } catch (e) { toast(e.message); }
+  refresh();
+}
+
+// ---- 状态 ----
+async function refresh() {
+  try {
+    const s = await api('/api/status');
+    const wasConnected = state.connected, first = !state.boards;
+    state.connected = s.account.connected;
+    state.boards = s.boards; state.cnSources = s.cnSources; state.drafts = s.drafts;
+    if (first) { renderBoards(s.boards); loadTrends(); loadSaved(); setMode(localStorage.getItem('mode') || 'quick'); }
+    else if (wasConnected !== state.connected && state.board !== 'global') loadTrends();
+    renderQuickSources();
+    $('dot').classList.toggle('on', state.connected);
+    $('accountText').textContent = state.connected ? `@${s.account.screenName || '已登录'}` : '未登录';
+    $('accountBtn').textContent = state.connected ? '退出' : '登录 X';
+    $('loginNotice').classList.toggle('hidden', state.connected);
+    $('quota').textContent = `今日已用 ${s.todayCount}/${s.dailyLimit}`;
+    $('nextSlot').textContent = `下一个空档：${s.nextSlot}`;
+    $('whenHint').textContent = s.bestHours ? `已按你的数据排到互动最好的时段：${s.nextSlot}` : `自动安排：${s.nextSlot}`;
+    $('aiHint').textContent = s.aiEnabled ? '' : '未配置 AI 模型，只能生成占位模板 → 去「后台设置」配置';
+    if (!s.aiEnabled) $('quickHint').innerHTML = '一键发帖需要 AI：请先到 <a href="/settings">后台设置</a> 配置模型';
+    const order = {queued:0, failed:1, expired:1, posted:2};
+    const drafts = [...s.drafts].sort((a, b) => order[a.status] - order[b.status] || (a.status === 'posted' ? b.posted_at.localeCompare(a.posted_at) : 0));
+    $('list').innerHTML = drafts.slice(0, 20).map(draftCard).join('') || '<div class="empty">队列是空的</div>';
+  } catch (e) { $('accountText').textContent = e.message; }
+}
+refresh(); setInterval(refresh, 30000);
+</script>
+</body>
+</html>

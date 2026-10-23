@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 运行时数据：含 X 登录态（cookie）、数据库和日志，绝不入库
+data/*
+!data/.gitkeep
+
+# 构建产物（agentx 需在本地按 README 构建）
+bin/
+
+# 第三方源码（AgentX 单独克隆，体积大且有自己的仓库）
+vendor/
