@@ -40,13 +40,25 @@ STATUS_TEXT = {"queued": "待发布", "posted": "已发布", "failed": "发布�
 app = Flask(__name__, static_folder=None)
 
 
+@app.before_request
+def guard_origin():
+    """只接受本站页面发起的写请求，挡住其他网页跨站操控发帖。"""
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return None
+    origin = request.origin or request.headers.get("Referer", "")
+    if origin and not origin.startswith(request.host_url.rstrip("/")):
+        return jsonify({"ok": False, "error": "拒绝来自其他网站的请求"}), 403
+    return None
+
+
 def now() -> datetime:
     return datetime.now(TZ)
 
 
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
@@ -66,14 +78,15 @@ def init_db() -> None:
                 tweet_id TEXT,
                 error TEXT,
                 metrics TEXT,
-                image TEXT
+                image TEXT,
+                thread INTEGER NOT NULL DEFAULT 0
             )
             """
         )
         # 旧版本的“草稿”现在直接视为待发布
         conn.execute("UPDATE drafts SET status='queued' WHERE status='draft'")
         conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        for column, definition in (("tweet_id", "TEXT"), ("metrics", "TEXT"), ("image", "TEXT")):
+        for column, definition in (("tweet_id", "TEXT"), ("metrics", "TEXT"), ("image", "TEXT"), ("thread", "INTEGER NOT NULL DEFAULT 0")):
             if column not in {row["name"] for row in conn.execute("PRAGMA table_info(drafts)")}:
                 conn.execute(f"ALTER TABLE drafts ADD COLUMN {column} {definition}")
         conn.execute(
@@ -259,14 +272,17 @@ def suggest_time(candidate: datetime | None = None, exclude: int | None = None) 
     有历史数据时，优先落在互动最好的那几个小时（best_hours），否则在 9–23 点内顺延。
     """
     preferred = {int(h) for h in get_settings()["best_hours"].split(",") if h.isdigit()}
+    preferred = {hour for hour in preferred if DAY_START <= hour < DAY_END}
 
     def align(slot: datetime) -> datetime:
+        """不在最佳时段内时，挪到之后最近的一个最佳小时；今天没有就等明天。"""
         local = slot.astimezone(TZ)
-        if preferred and local.hour not in preferred:
-            later = [hour for hour in sorted(preferred) if DAY_START <= hour < DAY_END and hour > local.hour]
-            if later:
-                return datetime.combine(local.date(), datetime.min.time(), TZ) + timedelta(hours=later[0]) + jitter()
-        return slot
+        if not preferred or local.hour in preferred:
+            return slot
+        later = [hour for hour in sorted(preferred) if hour > local.hour]
+        if later:
+            return datetime.combine(local.date(), datetime.min.time(), TZ) + timedelta(hours=later[0]) + jitter()
+        return next_morning(local) + timedelta(hours=min(preferred) - DAY_START) + jitter()
 
     slot = align(candidate or now() + timedelta(minutes=10) + jitter())
     if slot < now() + timedelta(minutes=2):
@@ -301,15 +317,25 @@ def tweet_url(data: dict) -> tuple[str, str]:
     return (f"https://x.com/{handle}/status/{tweet_id}" if tweet_id else ""), tweet_id
 
 
+def thread_parts(text: str) -> list[str]:
+    """按空行拆成线程的各条，并校验每一条都不超过 X 的字数上限。"""
+    parts = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if len(parts) < 2:
+        raise ValueError("线程至少要有 2 段，段与段之间空一行")
+    if len(parts) > 10:
+        raise ValueError("一条线程最多 10 段")
+    for index, part in enumerate(parts, start=1):
+        if x_length(part) > 280:
+            raise ValueError(f"第 {index} 段超过 280 字符，请拆短")
+    return parts
+
+
 def post_one(item: dict) -> dict:
     """真正发出一条并落库。调用方负责持锁。每条只尝试一次。
 
-    超过一段的内容按空行拆成线程：第一条单独发，其余用 reply 串起来。
-    error 字段里如果存了 {"image": 路径}，发帖时作为配图附上。
+    只有勾选了「作为线程发送」才按空行拆成多条，用回复串起来；否则整段原文发一条。
     """
-    parts = [part.strip() for part in re.split(r"\n\s*\n", item["text"]) if part.strip()] or [item["text"]]
-    if len(parts) == 1 or any(x_length(part) > 280 for part in parts):
-        parts = [item["text"]]
+    parts = thread_parts(item["text"]) if item.get("thread") else [item["text"]]
     image = item.get("image") or ""
     args = ["post", "--account", ACCOUNT, parts[0]]
     if image and Path(image).exists():
@@ -323,16 +349,20 @@ def post_one(item: dict) -> dict:
             conn.commit()
             return {"ok": False, "error": message}
         url, tweet_id = tweet_url(result.get("data") or {})
+        sent = 1
         reply_to = tweet_id
         for part in parts[1:]:
             reply = run_agentx(["reply", "--account", ACCOUNT, reply_to, part], timeout=60)
             if not reply.get("ok"):
                 break  # 线程发到一半中断：已发出的保留，不再重试
+            sent += 1
             reply_to = str((reply.get("data") or {}).get("id") or reply_to)
-        suffix = f"（线程 {len(parts)} 条）" if len(parts) > 1 else ""
+        note = None
+        if len(parts) > 1 and sent < len(parts):
+            note = f"线程只发出了前 {sent} 段（共 {len(parts)} 段），其余未发，没有自动重试"
         conn.execute(
             "UPDATE drafts SET status='posted', posted_at=?, tweet_url=?, tweet_id=?, error=?, updated_at=? WHERE id=?",
-            (posted, url, tweet_id, suffix or None, posted, item["id"]),
+            (posted, url, tweet_id, note, posted, item["id"]),
         )
         conn.commit()
     return {"ok": True, "url": url}
@@ -371,19 +401,25 @@ def scheduler_loop(stop: threading.Event) -> None:
 
 
 def parse_analytics(payload: dict) -> dict | None:
-    """从 analytics 返回里抽出互动数。FxTwitter 字段名不稳定，所以按候选名兜底。"""
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    tweet = data.get("tweet") if isinstance(data.get("tweet"), dict) else data
+    """从 analytics 返回里抽出互动数。字段名和嵌套层级都不稳定，所以按名字全局找。"""
     names = {"likes": ("likes", "like_count", "favorite_count"),
              "retweets": ("retweets", "retweet_count"),
              "replies": ("replies", "reply_count"),
              "views": ("views", "view_count", "impressions")}
-    found = {}
-    for key, aliases in names.items():
-        for alias in aliases:
-            if isinstance(tweet.get(alias), int):
-                found[key] = tweet[alias]
-                break
+    found: dict[str, int] = {}
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                for metric, aliases in names.items():
+                    if metric not in found and key in aliases and isinstance(value, (int, float)) and not isinstance(value, bool):
+                        found[metric] = int(value)
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload.get("data"))
     return found or None
 
 
@@ -429,8 +465,9 @@ def update_best_hours() -> None:
     reliable = {hour: sum(scores) / len(scores) for hour, scores in buckets.items() if len(scores) >= 2 and DAY_START <= hour < DAY_END}
     if len(reliable) < 3:
         return
-    best = sorted(reliable, key=reliable.get, reverse=True)[:4]
-    save_settings({"best_hours": ",".join(str(hour) for hour in sorted(best))})
+    best = ",".join(str(hour) for hour in sorted(sorted(reliable, key=reliable.get, reverse=True)[:4]))
+    if best != get_settings()["best_hours"]:
+        save_settings({"best_hours": best})
 
 
 TREND_CACHE: dict[str, tuple[datetime, list[dict]]] = {}
@@ -556,13 +593,21 @@ def tidy(text: str) -> str:
 
 
 def parse_json(completion: str) -> dict:
-    raw = completion.strip()
-    match = re.search(r"\{.*\}", raw, re.S)
-    try:
-        value = json.loads(match.group(0) if match else raw)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+    """从模型输出里取出 JSON。
+
+    有的模型会先输出 <think>…</think> 思考过程再给答案，思考里也可能有大括号，所以先去掉这段。
+    答案本身有时包在 ```json 代码块里，取其中最大的一个对象，避免误拿到举例用的小片段。
+    """
+    raw = re.sub(r"<think>.*?</think>", "", str(completion), flags=re.S)
+    found = []
+    for match in re.finditer(r"\{", raw):
+        try:
+            value, end = json.JSONDecoder().raw_decode(raw, match.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            found.append((end - match.start(), value))
+    return max(found)[1] if found else {}
 
 
 def copy_variants(text: str, angle: str, completion: str) -> list[str]:
@@ -650,30 +695,50 @@ def get_json(url: str, ua: str, referer: str) -> dict:
         return json.loads(response.read().decode("utf-8", "replace"))
 
 
+def as_int(value) -> int:
+    """热榜接口的热度字段类型不稳定，统一转成整数，转不出就当 0。"""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    digits = re.sub(r"\D", "", str(value))
+    return int(digits) if digits else 0
+
+
 def parse_cn_hot(source: str, payload: dict) -> list[dict]:
     """统一成 {name, summary, heat, url}，并去掉广告位。"""
+    data = payload.get("data") if isinstance(payload, dict) else None
     items = []
     if source == "weibo":
-        for x in (payload.get("data") or {}).get("realtime") or []:
-            if x.get("is_ad") or not x.get("word"):
+        entries = data.get("realtime") if isinstance(data, dict) else None
+        for entry in entries or []:
+            if not isinstance(entry, dict) or entry.get("is_ad") or not entry.get("word"):
                 continue
-            word = x["word"]
-            items.append({"name": word, "summary": x.get("flag_desc", "") or "", "heat": x.get("num", 0),
+            word = str(entry["word"])
+            items.append({"name": word, "summary": str(entry.get("flag_desc") or ""), "heat": as_int(entry.get("num")),
                           "url": "https://s.weibo.com/weibo?q=" + urllib.parse.quote(f"#{word}#")})
     elif source == "douyin":
-        for x in (payload.get("data") or {}).get("word_list") or []:
-            if not x.get("word"):
+        entries = data.get("word_list") if isinstance(data, dict) else None
+        for entry in entries or []:
+            if not isinstance(entry, dict) or not entry.get("word"):
                 continue
-            items.append({"name": x["word"], "summary": "", "heat": x.get("hot_value", 0),
-                          "url": "https://www.douyin.com/search/" + urllib.parse.quote(x["word"])})
+            word = str(entry["word"])
+            items.append({"name": word, "summary": "", "heat": as_int(entry.get("hot_value")),
+                          "url": "https://www.douyin.com/search/" + urllib.parse.quote(word)})
     elif source == "zhihu":
-        for x in payload.get("data") or []:
-            target = x.get("target") or {}
+        for entry in data or []:
+            if not isinstance(entry, dict):
+                continue
+            target = entry.get("target") if isinstance(entry.get("target"), dict) else {}
             if not target.get("title"):
                 continue
-            heat = re.sub(r"\D", "", str(x.get("detail_text", "")))
-            items.append({"name": target["title"], "summary": str(target.get("excerpt", ""))[:300],
-                          "heat": int(heat) * 10000 if heat else 0,
+            excerpt = target.get("excerpt")
+            detail = str(entry.get("detail_text") or "")
+            heat = as_int(detail)
+            if "万" in detail:
+                heat *= 10000
+            items.append({"name": str(target["title"]), "summary": str(excerpt or "")[:300],
+                          "heat": heat,
                           "url": f"https://www.zhihu.com/question/{target.get('id', '')}"})
     return items[:30]
 
@@ -810,22 +875,31 @@ def wrap_text(draw, text: str, font, width: int) -> list[str]:
     return lines or [""]
 
 
+def card_font(size: int):
+    """找一个能显示中文的字体。Windows 用系统字体，Linux 服务器上用随仓库附带的字体。"""
+    from PIL import ImageFont
+
+    candidates = [
+        Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "msyh.ttc",
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        APP_DIR / "static" / "fonts" / "NotoSansSC-Regular.otf",
+    ]
+    for path in candidates:
+        if path.exists():
+            return ImageFont.truetype(str(path), size)
+    return ImageFont.load_default()
+
+
 def render_card(text: str) -> Path:
     """把金句渲染成深色图片，纯文字帖配图后互动通常更好。"""
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
     IMAGE_DIR.mkdir(exist_ok=True)
     image = Image.new("RGB", (CARD_W, CARD_H), CARD_COLORS[0])
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, 14, CARD_H), fill=CARD_COLORS[2])
-    font = None
-    for name in ("msyh.ttc", "msyhbd.ttc", "simhei.ttf", "PingFang.ttc", "NotoSansCJK-Regular.ttc"):
-        try:
-            font = ImageFont.truetype(name, 56)
-            break
-        except OSError:
-            continue
-    font = font or ImageFont.load_default()
+    font = card_font(56)
     lines = wrap_text(draw, tidy(text)[:150], font, CARD_W - 200)[:8]
     total_h = len(lines) * 80
     y = max(80, (CARD_H - total_h) // 2)
@@ -916,7 +990,7 @@ def status():
         "minGapHours": int(settings["min_gap_hours"]),
         "boards": {key: label for key, (label, _) in BOARDS.items()},
         "cnSources": CN_SOURCES,
-        "todayCount": daily_count(now().date()),
+        "todayCount": sum(1 for item in rows("posted") if item.get("posted_at") and datetime.fromisoformat(item["posted_at"]).astimezone(TZ).date() == now().date()),
         "nextSlot": when_text(suggest_time().isoformat()),
         "bestHours": get_settings()["best_hours"],
         "drafts": [present(item) for item in rows()],
@@ -1123,21 +1197,29 @@ def parse_time(raw: str) -> datetime | None:
 def create_draft():
     body = request.get_json(force=True)
     text = str(body.get("text", "")).strip()
+    as_thread = bool(body.get("thread"))
     if not text:
         return jsonify({"ok": False, "error": "内容不能为空"}), 400
-    if x_length(text) > 280:
-        return jsonify({"ok": False, "error": "超过 X 的 280 字符上限（中文约 140 字），请精简"}), 400
+    try:
+        parts = thread_parts(text) if as_thread else [text]
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    if not as_thread and x_length(text) > 280:
+        return jsonify({"ok": False, "error": "超过 X 的 280 字符上限（中文约 140 字），请精简，或勾选「作为线程发送」按空行分段"}), 400
     if text in {item["text"] for item in rows() if item["status"] in {"queued", "posted"}}:
         return jsonify({"ok": False, "error": "这条内容已经在队列里或发过了"}), 409
-    scheduled = suggest_time(parse_time(str(body.get("scheduledAt", "")).strip()))
+    try:
+        scheduled = suggest_time(parse_time(str(body.get("scheduledAt", "")).strip()))
+    except (RuntimeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"安排发布时间失败：{exc}"}), 409
     current = now().isoformat()
     with closing(connect()) as conn:
         cursor = conn.execute(
-            "INSERT INTO drafts (text, scheduled_at, status, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?)",
-            (text, scheduled.isoformat(), current, current),
+            "INSERT INTO drafts (text, scheduled_at, status, created_at, updated_at, thread) VALUES (?, ?, 'queued', ?, ?, ?)",
+            (text, scheduled.isoformat(), current, current, 1 if as_thread else 0),
         )
         conn.commit()
-    return jsonify({"ok": True, "id": cursor.lastrowid, "whenText": when_text(scheduled.isoformat())})
+    return jsonify({"ok": True, "id": cursor.lastrowid, "whenText": when_text(scheduled.isoformat()), "parts": len(parts)})
 
 
 HARD_GAP = timedelta(minutes=60)  # 立即发送也要遵守的最小间隔

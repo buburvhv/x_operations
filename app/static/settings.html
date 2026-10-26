@@ -10,7 +10,8 @@
     button,input,textarea,select { font:inherit; color:inherit; }
     button { border:0; border-radius:9px; padding:9px 14px; background:var(--accent); color:#fff; cursor:pointer; font-weight:600; }
     button:hover { background:var(--accent2); } button:disabled { opacity:.55; cursor:wait; }
-    button.ghost { background:var(--panel); color:var(--text); border:1px solid var(--line); font-weight:500; } button.ghost:hover { background:var(--panel2); }
+    .link { background:none; border:0; padding:0; color:var(--accent); cursor:pointer; font-weight:500; }
+    .hidden { display:none; }
     input,textarea,select { width:100%; border:1px solid var(--line); border-radius:9px; background:var(--panel); padding:10px 12px; }
     input:focus,textarea:focus,select:focus { outline:3px solid #1d9bf033; border-color:var(--accent); }
     header { display:flex; align-items:center; gap:16px; padding:14px 24px; border-bottom:1px solid var(--line); background:var(--panel); }
@@ -47,7 +48,7 @@
     <input id="ai_base_url" placeholder="https://api.moonshot.cn/v1">
     <div class="grid">
       <div><label for="ai_model">写手模型</label><input id="ai_model" placeholder="任意模型名，如 kimi-k3"></div>
-      <div><label for="ai_api_key">API Key</label><input id="ai_api_key" type="password" autocomplete="off" placeholder="留空表示不修改"></div>
+      <div id="keyField"><label for="ai_api_key">API Key</label><input id="ai_api_key" type="password" autocomplete="off" placeholder="留空表示不修改"></div>
     </div>
     <label for="ai_editor_model">编辑模型（选填）</label>
     <input id="ai_editor_model" placeholder="留空则和写手用同一个；需与上面是同一个服务商">
@@ -87,17 +88,28 @@ async function api(url, options = {}) {
 }
 function range(id, [low, high], unit) { $(id).innerHTML = Array.from({length:high - low + 1}, (_, i) => low + i).map(n => `<option value="${n}">${n} ${unit}</option>`).join(''); }
 function matchPreset() { const v = `${$('ai_base_url').value}|${$('ai_model').value}`; $('preset').value = [...$('preset').options].some(o => o.value === v) ? v : ''; }
-async function load() {
+async function load(keepKey = false) {
+  const typed = $('ai_api_key').value;
   const {settings, limits} = await api('/api/settings');
   range('daily_limit', limits.daily_limit, '条'); range('min_gap_hours', limits.min_gap_hours, '小时');
   for (const key of FIELDS) if (key !== 'ai_api_key') $(key).value = settings[key] ?? '';
-  $('keyState').textContent = settings.ai_api_key ? `当前密钥：${settings.ai_api_key}` : '尚未设置密钥';
+  const hasKey = Boolean(settings.ai_api_key);
+  if (keepKey && typed) {
+    $('ai_api_key').value = typed;  // 测试失败时保留刚填的密钥，不用重填
+  } else if (hasKey) {
+    $('keyField').classList.add('hidden');
+    $('keyState').innerHTML = `当前密钥：${settings.ai_api_key} <button type="button" class="link" onclick="editKey()">更换</button>`;
+  } else {
+    $('keyField').classList.remove('hidden');
+    $('keyState').textContent = '尚未设置密钥';
+  }
   matchPreset();
 }
+function editKey() { $('keyField').classList.remove('hidden'); $('keyState').textContent = '填写新密钥后保存，留空则继续用原来的'; $('ai_api_key').value = ''; $('ai_api_key').focus(); }
 $('preset').onchange = e => { if (!e.target.value) { $('ai_model').focus(); return; } const [url, model] = e.target.value.split('|'); $('ai_base_url').value = url; $('ai_model').value = model; };
 $('ai_base_url').oninput = $('ai_model').oninput = matchPreset;
 function show(el, ok, text) { el.className = `result ${ok ? 'ok' : 'bad'}`; el.textContent = text; }
-async function persist() { const body = Object.fromEntries(FIELDS.map(k => [k, $(k).value])); await api('/api/settings', {method:'POST', body:JSON.stringify(body)}); $('ai_api_key').value = ''; await load(); }
+async function persist(keepKey = false) { const body = Object.fromEntries(FIELDS.map(k => [k, $(k).value])); await api('/api/settings', {method:'POST', body:JSON.stringify(body)}); await load(keepKey); }
 async function save() {
   $('saveBtn').disabled = true;
   try { await persist(); show($('saveResult'), true, '已保存'); } catch (e) { show($('saveResult'), false, e.message); }
@@ -106,7 +118,7 @@ async function save() {
 async function testModel() {
   $('testBtn').disabled = true; show($('testResult'), true, '测试中…');
   try { await persist(); const b = await api('/api/settings/test', {method:'POST'}); show($('testResult'), true, `连接成功：${b.reply}`); }
-  catch (e) { show($('testResult'), false, e.message); }
+  catch (e) { await load(true); show($('testResult'), false, e.message); }
   $('testBtn').disabled = false;
 }
 load();

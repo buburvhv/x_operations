@@ -53,6 +53,9 @@
     .pill { display:inline-block; font-size:12px; border-radius:99px; padding:1px 9px; background:var(--soft); color:#0b5d93; font-weight:600; margin-right:6px; }
     .facts { margin:8px 0 0; padding-left:18px; font-size:13px; } .facts li + li { margin-top:4px; } .facts .src { color:var(--muted); }
     .revise { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; } .revise button { padding:5px 11px; font-weight:500; }
+    .bar { height:6px; border-radius:99px; background:var(--panel2); overflow:hidden; }
+    .bar i { display:block; height:100%; width:30%; border-radius:99px; background:var(--accent); animation:slide 1.1s ease-in-out infinite; }
+    @keyframes slide { 0% { transform:translateX(-110%); } 100% { transform:translateX(380%); } }
     @media (max-width:1200px) { .shell,.quick { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -87,6 +90,7 @@
       <label class="muted" for="angle" style="display:block;margin-top:14px">你的看法（选填，一句话即可，让文案更像你说的）</label>
       <input id="angle" placeholder="例如：我觉得这事被高估了">
       <div class="row" style="margin-top:10px"><span class="muted" id="aiHint"></span><button id="genBtn" onclick="generate()">AI 写 3 条</button></div>
+      <div id="genBusy" class="hidden" style="margin-top:12px"><div class="bar"><i></i></div><p class="muted" id="genBusyText" style="text-align:center">写稿中…</p></div>
       <div id="variants"></div>
     </div>
   </section>
@@ -96,6 +100,7 @@
     <div id="loginNotice" class="notice hidden">还没登录 X：可以先写好排进队列，登录后到点自动发出。<button class="link" onclick="openLogin()">去登录</button></div>
     <textarea id="text" rows="7" placeholder="点选中间的一种写法，或直接在这里写。这就是最终要发出的那一条推文。"></textarea>
     <div class="row"><span id="count" class="muted">0/280</span><span class="muted" id="whenHint"></span></div>
+    <label class="muted" style="display:flex;align-items:center;gap:6px;margin-top:8px"><input id="asThread" type="checkbox" style="width:auto" onchange="updateCount()">作为线程发送（用空行分段，每段单独成帖，按顺序串成一条）</label>
     <div id="manualTime" class="hidden" style="margin-top:8px">
       <label class="muted" for="when">指定最早发布时间（系统仍会遵守每天 ≤3 条、间隔 ≥4 小时）</label>
       <input id="when" type="datetime-local">
@@ -114,6 +119,10 @@
     <div class="hero" id="quickHero">
       <button id="quickBtn" onclick="quickGenerate()">✨ 生成一条</button>
       <p class="muted" id="quickHint">约 30–60 秒：选热点 → 提炼事实 → 写 3 条 → 编辑留 1 条</p>
+    </div>
+    <div id="quickBusy" class="hidden" style="margin-top:14px">
+      <div class="bar"><i id="quickBar"></i></div>
+      <p class="muted" id="quickBusyText" style="text-align:center">正在生成…</p>
     </div>
     <div id="quickResult" class="hidden">
       <div class="event" id="quickEvent"></div>
@@ -280,12 +289,16 @@ const xlen = t => [...t.replace(/https?:\/\/\S+/g, 'x'.repeat(23))].reduce((n, c
 async function generate() {
   if (!state.topic) return;
   const topic = state.topic;
+  $('genBtn').disabled = true; $('genBusy').classList.remove('hidden');
+  const started = Date.now();
+  const tick = setInterval(() => { $('genBusyText').textContent = `写稿 + 编辑把关中，已用 ${Math.round((Date.now() - started) / 1000)} 秒`; }, 1000);
   try {
-    const body = await busy($('genBtn'), '写稿 + 编辑把关中，约 20–40 秒…', () => api('/api/copy', {method:'POST', body:JSON.stringify({topic:topic.name, context:state.context, angle:$('angle').value})}));
+    const body = await api('/api/copy', {method:'POST', body:JSON.stringify({topic:topic.name, context:state.context, angle:$('angle').value})});
     if (state.topic !== topic) return;
     state.variants = body.variants;
     $('variants').innerHTML = body.variants.map((v, i) => `<div class="card variant" data-i="${i}" tabindex="0"><div class="row"><span class="tag">${i === 0 && v.score ? '推荐 · ' : ''}${esc(v.type || '写法 ' + (i + 1))}${v.score ? ' · ' + esc(v.score) + ' 分' : ''}</span><span class="muted">${xlen(v.text)}/280 · 点击使用</span></div><div style="white-space:pre-wrap;margin-top:4px">${esc(v.text)}</div>${v.why ? `<div class="muted" style="margin-top:6px">💡 ${esc(v.why)}</div>` : ''}</div>`).join('');
   } catch (e) { toast(e.message); }
+  finally { clearInterval(tick); $('genBtn').disabled = false; $('genBusy').classList.add('hidden'); }
 }
 function useVariant(card) {
   document.querySelectorAll('.variant.active').forEach(x => x.classList.remove('active')); card.classList.add('active');
@@ -295,15 +308,25 @@ $('variants').addEventListener('click', e => { const c = e.target.closest('.vari
 $('variants').addEventListener('keydown', e => { const c = e.target.closest('.variant'); if (c && e.key === 'Enter') useVariant(c); });
 
 // ---- 排队 ----
-function updateCount() { const n = xlen($('text').value); $('count').textContent = `${n}/280（中文算 2）`; $('count').style.color = n > 280 ? 'var(--bad)' : n > 250 ? 'var(--warn)' : ''; }
+function updateCount() {
+  const text = $('text').value, thread = $('asThread').checked;
+  if (thread) {
+    const parts = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    const over = parts.filter(p => xlen(p) > 280).length;
+    $('count').textContent = `线程 ${parts.length} 段` + (over ? `，其中 ${over} 段超长` : '');
+    $('count').style.color = parts.length < 2 || over ? 'var(--bad)' : '';
+    return;
+  }
+  const n = xlen(text); $('count').textContent = `${n}/280（中文算 2）`; $('count').style.color = n > 280 ? 'var(--bad)' : n > 250 ? 'var(--warn)' : '';
+}
 $('text').addEventListener('input', updateCount);
 function toggleTime() { const box = $('manualTime'); box.classList.toggle('hidden'); $('timeToggle').textContent = box.classList.contains('hidden') ? '自己指定时间' : '改回自动安排'; if (box.classList.contains('hidden')) $('when').value = ''; }
 async function createDraft() {
   const text = $('text').value.trim();
   if (!text) { toast('先选一种写法或输入内容'); $('text').focus(); return; }
   try {
-    const body = await busy($('queueBtn'), '加入中…', () => api('/api/drafts', {method:'POST', body:JSON.stringify({text, scheduledAt:$('when').value})}));
-    $('text').value = ''; updateCount(); if (!$('manualTime').classList.contains('hidden')) toggleTime();
+    const body = await busy($('queueBtn'), '加入中…', () => api('/api/drafts', {method:'POST', body:JSON.stringify({text, scheduledAt:$('when').value, thread:$('asThread').checked})}));
+    $('text').value = ''; $('asThread').checked = false; updateCount(); if (!$('manualTime').classList.contains('hidden')) toggleTime();
     toast(`已加入队列，将于 ${body.whenText} 自动发布`); refresh();
   } catch (e) { toast(e.message); }
 }
@@ -390,18 +413,25 @@ function renderEvent(r) {
   $('quickWhy').textContent = r.post.why ? `💡 ${r.post.why}` : '';
 }
 async function quickGenerate(sameEvent = false, nextEvent = false) {
+  if (quick.running) return;
   if (nextEvent && quick.result) quick.skip.push(quick.result.event.name);
   const [source, board] = quick.source.startsWith('board:') ? ['board', quick.source.slice(6)] : [quick.source, ''];
   const payload = {source, board, skip: quick.skip};
   if (sameEvent && quick.result) payload.event = quick.result.event;
-  const label = sameEvent ? '重写中，约 20–40 秒…' : '挑热点、查事实、写稿中，约 30–60 秒…';
+  quick.running = true;
+  $('quickBtn').disabled = true;
+  $('quickBusy').classList.remove('hidden');
+  $('quickBusyText').textContent = sameEvent ? '正在换个写法…' : '正在挑热点、查事实、写稿…';
+  const started = Date.now();
+  const tick = setInterval(() => { $('quickBusyText').textContent = `${sameEvent ? '换个写法' : '生成'}中，已用 ${Math.round((Date.now() - started) / 1000)} 秒`; }, 1000);
   try {
-    const r = await busy($('quickBtn'), label, () => api('/api/quick', {method:'POST', body:JSON.stringify(payload)}));
+    const r = await api('/api/quick', {method:'POST', body:JSON.stringify(payload)});
     quick.result = r; quick.history = [];
     renderEvent(r); setQuickText(r.post.text);
     $('quickResult').classList.remove('hidden'); $('quickBtn').textContent = '✨ 再来一条';
     $('quickHint').textContent = '不满意可以让 AI 改，或换个写法 / 换个热点';
   } catch (e) { if (/登录/.test(e.message)) openLogin(); toast(e.message); }
+  finally { clearInterval(tick); quick.running = false; $('quickBtn').disabled = false; $('quickBusy').classList.add('hidden'); }
 }
 async function revise(preset) {
   const text = $('quickText').value.trim(), instruction = $('reviseInput').value.trim();

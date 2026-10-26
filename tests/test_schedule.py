@@ -236,41 +236,111 @@ def test_create_draft_returns_id(tmp_path, monkeypatch):
     assert body["id"] == server.rows("queued")[0]["id"]
 
 
-def test_thread_post_replies_in_order(tmp_path, monkeypatch):
+def test_thread_posts_only_when_asked(tmp_path, monkeypatch):
     server.DB_PATH = tmp_path / "poster.db"
     server.init_db()
     calls = []
+    clock = {"at": datetime(2026, 10, 22, 12, tzinfo=ZoneInfo("Asia/Shanghai"))}
+    monkeypatch.setattr(server, "now", lambda: clock["at"])
+    monkeypatch.setattr(server, "account_state", lambda: {"connected": True})
+    monkeypatch.setattr(server, "run_agentx", lambda args, **k: calls.append(args) or {"ok": True, "data": {"id": str(len(calls)), "author": {"screenName": "a"}}})
+    client = server.app.test_client()
+
+    # 带空行的普通帖子必须整条发出，不能被拆成线程
+    plain = client.post("/api/drafts", json={"text": "第一段。\n\n第二段。"}).get_json()["id"]
+    assert client.post(f"/api/drafts/{plain}/now").status_code == 200
+    assert len(calls) == 1 and calls[0][0] == "post" and calls[0][-1] == "第一段。\n\n第二段。"
+
+    # 勾选线程后才按空行拆分，逐条回复
+    clock["at"] += timedelta(hours=2)
+    calls.clear()
+    thread = client.post("/api/drafts", json={"text": "第一段\n\n第二段\n\n第三段", "thread": True}).get_json()["id"]
+    assert client.post(f"/api/drafts/{thread}/now").status_code == 200
+    assert calls[0][-1] == "第一段"
+    assert [(c[0], c[-2]) for c in calls[1:]] == [("reply", "1"), ("reply", "2")]
+    assert server.rows("posted")[0]["error"] is None  # 发完整时不显示成错误
+
+
+def test_thread_reports_partial_send(tmp_path, monkeypatch):
+    server.DB_PATH = tmp_path / "poster.db"
+    server.init_db()
+    monkeypatch.setattr(server, "account_state", lambda: {"connected": True})
 
     def fake(args, **k):
-        calls.append(args)
-        return {"ok": True, "data": {"id": str(len(calls)), "author": {"screenName": "a"}}}
+        if args[0] == "reply":
+            return {"ok": False, "error": {"code": "rate_limited", "message": "slow down"}}
+        return {"ok": True, "data": {"id": "1", "author": {"screenName": "a"}}}
 
-    monkeypatch.setattr(server, "account_state", lambda: {"connected": True})
     monkeypatch.setattr(server, "run_agentx", fake)
     client = server.app.test_client()
-    draft_id = client.post("/api/drafts", json={"text": "第一段\n\n第二段\n\n第三段"}).get_json()["id"]
-    assert client.post(f"/api/drafts/{draft_id}/now").status_code == 200
-    assert calls[0][0] == "post" and calls[0][-1] == "第一段"
-    assert [(c[0], c[-2]) for c in calls[1:]] == [("reply", "1"), ("reply", "2")]
-    assert server.rows("posted")[0]["tweet_id"] == "1"
+    draft = client.post("/api/drafts", json={"text": "第一段\n\n第二段", "thread": True}).get_json()["id"]
+    client.post(f"/api/drafts/{draft}/now")
+    assert "只发出了前 1 段" in server.rows("posted")[0]["error"]
 
 
-def test_long_single_paragraph_stays_one_post(tmp_path, monkeypatch):
+def test_thread_rejects_bad_splits(tmp_path, monkeypatch):
     server.DB_PATH = tmp_path / "poster.db"
     server.init_db()
-    calls = []
-    monkeypatch.setattr(server, "account_state", lambda: {"connected": True})
-    monkeypatch.setattr(server, "run_agentx", lambda args, **k: calls.append(args) or {"ok": True, "data": {"id": "1", "author": {"screenName": "a"}}})
     client = server.app.test_client()
-    draft_id = client.post("/api/drafts", json={"text": "只有一段没有空行"}).get_json()["id"]
-    client.post(f"/api/drafts/{draft_id}/now")
-    assert len(calls) == 1 and calls[0][0] == "post"
+    assert client.post("/api/drafts", json={"text": "只有一段", "thread": True}).status_code == 400
+    assert client.post("/api/drafts", json={"text": "短\n\n" + "超" * 150, "thread": True}).status_code == 400
+    # 单条帖子仍然受 280 限制
+    assert client.post("/api/drafts", json={"text": "超" * 150}).status_code == 400
+
+
+def test_late_evening_slot_rolls_to_next_best_hour(tmp_path, monkeypatch):
+    server.DB_PATH = tmp_path / "poster.db"
+    server.init_db()
+    server.save_settings({"best_hours": "10,21"})
+    base = datetime(2026, 10, 22, 9, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(server, "now", lambda: base)
+    slot = server.suggest_time(datetime(2026, 10, 22, 22, 30, tzinfo=ZoneInfo("Asia/Shanghai")))
+    assert slot.date() == base.date() + timedelta(days=1)
+    assert slot.hour == 10
+
+
+def test_cross_site_request_is_refused(tmp_path, monkeypatch):
+    server.DB_PATH = tmp_path / "poster.db"
+    server.init_db()
+    client = server.app.test_client()
+    response = client.post("/api/drafts", json={"text": "跨站发帖"}, headers={"Origin": "https://evil.example"})
+    assert response.status_code == 403
+    assert server.rows() == []
+
+
+def test_parse_cn_hot_tolerates_odd_payloads():
+    assert server.parse_cn_hot("douyin", {"data": {"word_list": [{"word": "话题", "hot_value": "很多"}]}})[0]["heat"] == 0
+    assert server.parse_cn_hot("zhihu", {"data": [{"detail_text": "563 万热度", "target": {"id": "1", "title": "问", "excerpt": None}}]})[0]["heat"] == 5630000
+    for source in ("weibo", "douyin", "zhihu"):
+        assert server.parse_cn_hot(source, {"data": "坏数据"}) == []
+
+
+def test_parse_json_ignores_thinking_preamble():
+    # 推理模型会先输出 <think>，里面也可能有大括号，不能把这段算进 JSON
+    text = '<think>先想一下 {"index": 9}</think>\n{"index": 1, "why": "相关"}'
+    assert server.parse_json(text) == {"index": 1, "why": "相关"}
+    assert server.parse_json("没有 json") == {}
+    assert server.parse_json('前文 {"a": 1} 真正的答案是 {"b": 2, "c": 3}') == {"b": 2, "c": 3}
+    payload = {"ok": True, "data": {"legacy": {"favorite_count": 7, "retweet_count": 3}, "views": {"count": "800"}}}
+    assert server.parse_analytics(payload) == {"likes": 7, "retweets": 3}
+    assert server.parse_analytics({"ok": True, "data": {}}) is None
+
+
+def test_today_count_counts_posted_not_queued(tmp_path, monkeypatch):
+    server.DB_PATH = tmp_path / "poster.db"
+    server.init_db()
+    base = datetime(2026, 10, 22, 12, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(server, "now", lambda: base)
+    with server.closing(server.connect()) as conn:
+        conn.execute("INSERT INTO drafts (text, status, created_at, updated_at, posted_at) VALUES ('发了', 'posted', ?, ?, ?)", (base.isoformat(),) * 3)
+        conn.execute("INSERT INTO drafts (text, status, created_at, updated_at, scheduled_at) VALUES ('排了', 'queued', ?, ?, ?)", (base.isoformat(),) * 3)
+        conn.commit()
+    assert server.app.test_client().get("/api/status").get_json()["todayCount"] == 1
 
 
 def test_parse_analytics_accepts_fxtwitter_shape():
     payload = {"ok": True, "data": {"tweet": {"likes": 5, "retweets": 2, "replies": 1, "views": 800}}}
     assert server.parse_analytics(payload) == {"likes": 5, "retweets": 2, "replies": 1, "views": 800}
-    assert server.parse_analytics({"ok": True, "data": {}}) is None
     assert server.engagement({"likes": 5, "retweets": 2, "replies": 1, "views": 800}) == 5 + 8 + 1 + 4
 
 
